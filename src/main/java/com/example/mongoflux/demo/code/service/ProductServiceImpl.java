@@ -1,7 +1,10 @@
 package com.example.mongoflux.demo.code.service;
 
+import com.example.mongoflux.demo.code.constants.MongoCode;
+import com.example.mongoflux.demo.code.constants.ResponseCode;
 import com.example.mongoflux.demo.code.entity.ListResponse;
 import com.example.mongoflux.demo.code.entity.Product;
+import com.example.mongoflux.demo.code.entity.ProductDeleteRequest;
 import com.example.mongoflux.demo.code.entity.Response;
 import com.example.mongoflux.demo.code.exception.ProductValidationException;
 import com.example.mongoflux.demo.code.repository.ProductRepository;
@@ -31,8 +34,10 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public Mono<Product> findProductByName() {
-        return null;
+    public Mono<Response<Product>> findProductByName(String name) {
+        return productRepository
+                .findFirstByName(name)
+                .map(this::mapToProductResponse);
     }
 
     @Override
@@ -53,31 +58,44 @@ public class ProductServiceImpl implements ProductService {
                 .map(this::mapToPriceListResponse);
     }
 
+    @Override
+    public Mono<Response<String>> deleteProductByName(ProductDeleteRequest productDeleteRequest) {
+        return productRepository
+                .deleteProductByName(productDeleteRequest.getName())
+                .map(MongoCode.SUCCESS::equals)
+                .map(this::mapToSuccessResponse);
+    }
+
+    @Override
+    public Mono<Response<Long>> getProductCount() {
+        return productRepository.count().map(this::mapToProductCountResponse);
+    }
+
     private Mono<String> mapToRupiah(Double price) {
         return Mono.fromCallable(() -> "Rp." + price);
     }
 
     private ListResponse<String> mapToPriceListResponse(List<String> prices) {
         return ListResponse.<String>builder()
-                .code(200)
-                .message("Success")
+                .code(ResponseCode.SUCCESS_CODE.getCode())
+                .message(ResponseCode.SUCCESS_CODE.getMessage())
                 .content(prices)
                 .build();
     }
 
     private Response<Product> mapToProductResponse(Product product) {
         return Response.<Product>builder()
+                .code(ResponseCode.SUCCESS_CODE.getCode())
+                .message(ResponseCode.SUCCESS_CODE.getMessage())
                 .value(product)
-                .message("Success")
-                .code(200)
                 .build();
     }
 
     private ListResponse<Product> mapToProductListResponse(List<Product> products) {
         return ListResponse.<Product>builder()
+                .code(ResponseCode.SUCCESS_CODE.getCode())
+                .message(ResponseCode.SUCCESS_CODE.getMessage())
                 .content(products)
-                .message("Success")
-                .code(200)
                 .build();
     }
 
@@ -90,5 +108,27 @@ public class ProductServiceImpl implements ProductService {
             throw new ProductValidationException("Name Cannot Be Empty");
         }
         return product;
+    }
+
+    private Response<String> mapToSuccessResponse(Boolean success) {
+        Response<String> response = new Response<>();
+        if (success) {
+            response.setValue("Success");
+            response.setMessage(ResponseCode.SUCCESS_CODE.getMessage());
+            response.setCode(ResponseCode.SUCCESS_CODE.getCode());
+        } else {
+            response.setValue("Error");
+            response.setMessage(ResponseCode.SERVER_ERROR_CODE.getMessage());
+            response.setCode(ResponseCode.SERVER_ERROR_CODE.getCode());
+        }
+        return response;
+    }
+
+    private Response<Long> mapToProductCountResponse(long count) {
+        return Response.<Long>builder()
+                .value(count)
+                .code(ResponseCode.SUCCESS_CODE.getCode())
+                .message(ResponseCode.SUCCESS_CODE.getMessage())
+                .build();
     }
 }
