@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @NoArgsConstructor
 @AllArgsConstructor
+
 public class ProductDeleteRequest {
     private String name;
 }

@@ -9,6 +9,7 @@ import com.example.mongoflux.demo.code.entity.Response;
 import com.example.mongoflux.demo.code.exception.ProductValidationException;
 import com.example.mongoflux.demo.code.repository.ProductRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.ReactiveRedisOperations;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -19,56 +20,61 @@ import java.util.stream.Collectors;
 public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
+    private final ReactiveRedisOperations<String, Product> productReactiveRedisOperations;
 
     @Autowired
-    public ProductServiceImpl(ProductRepository productRepository) {
+    public ProductServiceImpl(ProductRepository productRepository, ReactiveRedisOperations<String, Product> productReactiveRedisOperations) {
         this.productRepository = productRepository;
+        this.productReactiveRedisOperations = productReactiveRedisOperations;
     }
 
     @Override
     public Mono<ListResponse<Product>> getProducts() {
         return productRepository
-                .findAll()
-                .collectList()
-                .map(this::mapToProductListResponse);
+            .findAll()
+            .collectList()
+            .map(this::mapToProductListResponse);
     }
 
     @Override
     public Mono<Response<Product>> findProductByName(String name) {
-        return productRepository
-                .findFirstByName(name)
-                .map(this::mapToProductResponse);
+        return Mono.fromCallable(() -> name)
+            .flatMap(this::findProductName)
+            .map(this::cacheToProductRedis)
+            .map(this::mapToProductResponse);
     }
 
     @Override
     public Mono<Response<Product>> saveProduct(Product product) {
         return Mono.fromCallable(() -> product)
-                .map(this::validateProduct)
-                .flatMap(productRepository::save)
-                .map(this::mapToProductResponse);
+            .map(this::validateProduct)
+            .flatMap(productRepository::save)
+            .map(this::mapToProductResponse);
     }
 
     @Override
     public Mono<ListResponse<String>> getPrices() {
         return productRepository
-                .findAll()
-                .map(Product::getPrice)
-                .flatMap(this::mapToRupiah)
-                .collect(Collectors.toList())
-                .map(this::mapToPriceListResponse);
+            .findAll()
+            .map(Product::getPrice)
+            .flatMap(this::mapToRupiah)
+            .collect(Collectors.toList())
+            .map(this::mapToPriceListResponse);
     }
 
     @Override
     public Mono<Response<String>> deleteProductByName(ProductDeleteRequest productDeleteRequest) {
         return productRepository
-                .deleteProductByName(productDeleteRequest.getName())
-                .map(MongoCode.SUCCESS::equals)
-                .map(this::mapToSuccessResponse);
+            .deleteProductByName(productDeleteRequest.getName())
+            .map(MongoCode.SUCCESS::equals)
+            .map(this::mapToSuccessResponse);
     }
 
     @Override
     public Mono<Response<Long>> getProductCount() {
-        return productRepository.count().map(this::mapToProductCountResponse);
+        return productRepository
+            .count()
+            .map(this::mapToProductCountResponse);
     }
 
     private Mono<String> mapToRupiah(Double price) {
@@ -126,9 +132,30 @@ public class ProductServiceImpl implements ProductService {
 
     private Response<Long> mapToProductCountResponse(long count) {
         return Response.<Long>builder()
-                .value(count)
-                .code(ResponseCode.SUCCESS_CODE.getCode())
-                .message(ResponseCode.SUCCESS_CODE.getMessage())
-                .build();
+            .value(count)
+            .code(ResponseCode.SUCCESS_CODE.getCode())
+            .message(ResponseCode.SUCCESS_CODE.getMessage())
+            .build();
     }
+
+    private Product cacheToProductRedis(Product product) {
+        productReactiveRedisOperations
+            .opsForValue()
+            .set(product.getName(), product)
+            .subscribe();
+        return product;
+    }
+
+    private Mono<Product> findProductName(String name) {
+        return productReactiveRedisOperations
+            .opsForValue()
+            .get(name)
+            .switchIfEmpty(Mono.defer(() -> this.findProductFromRepository(name)));
+    }
+
+    private Mono<Product> findProductFromRepository(String name) {
+        return productRepository
+            .findFirstByName(name);
+    }
+
 }
