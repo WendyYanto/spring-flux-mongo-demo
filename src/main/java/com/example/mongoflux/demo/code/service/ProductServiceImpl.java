@@ -15,20 +15,18 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@Service
-public class ProductServiceImpl implements ProductService {
+@Service public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
     private final ReactiveRedisOperations<String, Product> productReactiveRedisOperations;
 
-    @Autowired
-    public ProductServiceImpl(ProductRepository productRepository, ReactiveRedisOperations<String, Product> productReactiveRedisOperations) {
+    @Autowired public ProductServiceImpl(ProductRepository productRepository,
+        ReactiveRedisOperations<String, Product> productReactiveRedisOperations) {
         this.productRepository = productRepository;
         this.productReactiveRedisOperations = productReactiveRedisOperations;
     }
 
-    @Override
-    public Mono<ListResponse<Product>> getProducts() {
+    @Override public Mono<ListResponse<Product>> getProducts() {
         return productRepository
             .findAll()
             .doOnNext(this::cacheProduct)
@@ -36,24 +34,26 @@ public class ProductServiceImpl implements ProductService {
             .map(this::mapToProductListResponse);
     }
 
-    @Override
-    public Mono<Response<Product>> findProductByName(String name) {
+    @Override public Mono<Response<Product>> findProductByName(String name) {
         return Mono.fromCallable(() -> name)
             .flatMap(this::findProductName)
             .doOnNext(this::cacheProduct)
             .map(this::mapToProductResponse);
     }
 
-    @Override
-    public Mono<Response<Product>> saveProduct(Product product) {
+    @Override public Mono<Response<Product>> saveProduct(Product product) {
         return Mono.fromCallable(() -> product)
-            .map(this::validateProduct)
+            .doOnNext(this::validateProduct)
             .flatMap(productRepository::save)
+            .doOnNext(savedProduct ->
+                productReactiveRedisOperations
+                .opsForValue()
+                .set(savedProduct
+                .getName(), savedProduct))
             .map(this::mapToProductResponse);
     }
 
-    @Override
-    public Mono<ListResponse<String>> getPrices() {
+    @Override public Mono<ListResponse<String>> getPrices() {
         return productRepository
             .findAll()
             .map(Product::getPrice)
@@ -67,11 +67,12 @@ public class ProductServiceImpl implements ProductService {
         return productRepository
             .deleteProductByName(productDeleteRequest.getName())
             .map(MongoCode.SUCCESS::equals)
+            .doOnNext(success ->
+                this.deleteProductCache(success, productDeleteRequest.getName()))
             .map(this::mapToSuccessResponse);
     }
 
-    @Override
-    public Mono<Response<Long>> getProductCount() {
+    @Override public Mono<Response<Long>> getProductCount() {
         return productRepository
             .count()
             .map(this::mapToProductCountResponse);
@@ -83,29 +84,29 @@ public class ProductServiceImpl implements ProductService {
 
     private ListResponse<String> mapToPriceListResponse(List<String> prices) {
         return ListResponse.<String>builder()
-                .code(ResponseCode.SUCCESS_CODE.getCode())
-                .message(ResponseCode.SUCCESS_CODE.getMessage())
-                .content(prices)
-                .build();
+            .code(ResponseCode.SUCCESS_CODE.getCode())
+            .message(ResponseCode.SUCCESS_CODE.getMessage())
+            .content(prices)
+            .build();
     }
 
     private Response<Product> mapToProductResponse(Product product) {
         return Response.<Product>builder()
-                .code(ResponseCode.SUCCESS_CODE.getCode())
-                .message(ResponseCode.SUCCESS_CODE.getMessage())
-                .value(product)
-                .build();
+            .code(ResponseCode.SUCCESS_CODE.getCode())
+            .message(ResponseCode.SUCCESS_CODE.getMessage())
+            .value(product)
+            .build();
     }
 
     private ListResponse<Product> mapToProductListResponse(List<Product> products) {
         return ListResponse.<Product>builder()
-                .code(ResponseCode.SUCCESS_CODE.getCode())
-                .message(ResponseCode.SUCCESS_CODE.getMessage())
-                .content(products)
-                .build();
+            .code(ResponseCode.SUCCESS_CODE.getCode())
+            .message(ResponseCode.SUCCESS_CODE.getMessage())
+            .content(products)
+            .build();
     }
 
-    private Product validateProduct(Product product) {
+    private void validateProduct(Product product) {
         if (product.getQuantity() < 0) {
             throw new ProductValidationException("Quantity Have To Be Larger Than Zero");
         } else if (product.getPrice() < 0.0) {
@@ -113,7 +114,6 @@ public class ProductServiceImpl implements ProductService {
         } else if (product.getName().trim().isEmpty()) {
             throw new ProductValidationException("Name Cannot Be Empty");
         }
-        return product;
     }
 
     private Response<String> mapToSuccessResponse(Boolean success) {
@@ -153,7 +153,15 @@ public class ProductServiceImpl implements ProductService {
     }
 
     private Mono<Product> findProductFromRepository(String name) {
-        return productRepository
-            .findFirstByName(name);
+        return productRepository.findFirstByName(name);
+    }
+
+    private void deleteProductCache(boolean success, String key){
+        if (success) {
+            productReactiveRedisOperations
+                .opsForValue()
+                .delete(key)
+                .subscribe();
+        }
     }
 }
