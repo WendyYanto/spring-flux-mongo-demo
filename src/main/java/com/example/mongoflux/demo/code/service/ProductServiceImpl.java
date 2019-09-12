@@ -12,7 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.ReactiveRedisOperations;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
-
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,6 +31,7 @@ public class ProductServiceImpl implements ProductService {
     public Mono<ListResponse<Product>> getProducts() {
         return productRepository
             .findAll()
+            .doOnNext(this::cacheProduct)
             .collectList()
             .map(this::mapToProductListResponse);
     }
@@ -40,7 +40,7 @@ public class ProductServiceImpl implements ProductService {
     public Mono<Response<Product>> findProductByName(String name) {
         return Mono.fromCallable(() -> name)
             .flatMap(this::findProductName)
-            .map(this::cacheToProductRedis)
+            .doOnNext(this::cacheProduct)
             .map(this::mapToProductResponse);
     }
 
@@ -138,12 +138,11 @@ public class ProductServiceImpl implements ProductService {
             .build();
     }
 
-    private Product cacheToProductRedis(Product product) {
+    private void cacheProduct(Product product) {
         productReactiveRedisOperations
             .opsForValue()
             .set(product.getName(), product)
             .subscribe();
-        return product;
     }
 
     private Mono<Product> findProductName(String name) {
@@ -157,5 +156,4 @@ public class ProductServiceImpl implements ProductService {
         return productRepository
             .findFirstByName(name);
     }
-
 }
